@@ -19,8 +19,9 @@ if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
 
 // Middleware
 app.use(cors({
-  origin: 'https://clusterview-frontend.vercel.app/', // Replace with your frontend URL
+  origin: 'https://clusterview-frontend.vercel.app',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true // If using cookies or authentication
 }));
 app.use(bodyParser.json());
@@ -66,7 +67,7 @@ const generateOTP = () => {
 };
 
 // Connect to MongoDB
-mongoose.connect("mongodb+srv://sahilpote36_db_user:OJHZazFi6wTxnIya@clusterview.avutnns.mongodb.net/?retryWrites=true&w=majority&appName=ClusterView")
+mongoose.connect(process.env.DATABASE_URL, { useNewUrlParser: true, useUnifiedTopology: true })
   .then(() => console.log("MongoDB Connected"))
   .catch((err) => console.error("Connection Error: ", err));
 
