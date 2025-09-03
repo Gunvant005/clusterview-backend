@@ -8,7 +8,7 @@ Thumbs.db
 
 # Build and dependency directories
 node_modules/
-dist/
+dist/   
 build/
 out/
 bin/
