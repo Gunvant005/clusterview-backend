@@ -18,7 +18,11 @@ if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
 }
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: 'https://clusterview-frontend.vercel.app/', // Replace with your frontend URL
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  credentials: true // If using cookies or authentication
+}));
 app.use(bodyParser.json());
 
 // Serve static files from the uploads folder
