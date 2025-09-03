@@ -1,0 +1,76 @@
+# General
+*.log
+*.bak
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# Build and dependency directories
+node_modules/
+dist/
+build/
+out/
+bin/
+obj/
+
+# Dependency lock files (include only if you want to exclude them)
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
+
+# Environment files
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+
+# IDE and editor files
+.vscode/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+.Python
+env/
+venv/
+ENV/
+pip-log.txt
+pip-delete-this-directory.txt
+*.egg-info/
+
+# Java
+*.class
+*.jar
+target/
+.mvn/
+mvnw
+mvnw.cmd
+
+# Node.js
+npm-debug.log
+yarn-error.log
+yarn-debug.log
+
+# Testing
+coverage/
+*.lcov
+test-results/
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# Miscellaneous
+*.bak
+*.gho
+*.orig
+*.tmp
+*.temp
