@@ -25,6 +25,7 @@ obj/
 .env.development
 .env.test
 .env.production
+serviceAccountKey.json
 
 # IDE and editor files
 .vscode/
