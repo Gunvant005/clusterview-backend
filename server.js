@@ -62,7 +62,7 @@ const generateOTP = () => {
 };
 
 // Connect to MongoDB
-mongoose.connect('mongodb://127.0.0.1:27017/userDB')
+mongoose.connect("mongodb+srv://sahilpote36_db_user:OJHZazFi6wTxnIya@clusterview.avutnns.mongodb.net/?retryWrites=true&w=majority&appName=ClusterView")
   .then(() => console.log("MongoDB Connected"))
   .catch((err) => console.error("Connection Error: ", err));
 
