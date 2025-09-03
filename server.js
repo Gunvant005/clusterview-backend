@@ -19,7 +19,14 @@ if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
 
 // Middleware
 app.use(cors({
-  origin: 'https://clusterview-frontend.vercel.app',
+  origin: (origin, callback) => {
+    const allowedOrigin = 'https://clusterview-frontend.vercel.app';
+    if (!origin || origin === allowedOrigin || origin === allowedOrigin + '/') {
+      callback(null, allowedOrigin); // Always return without trailing slash
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true // If using cookies or authentication
