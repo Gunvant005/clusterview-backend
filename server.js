@@ -378,10 +378,13 @@ app.post('/register', async (req, res) => {
     await newUser.save();
 
     const sanitizedUsername = username.replace(/\s+/g, '_');
-    const userDb = mongoose.createConnection(`mongodb://127.0.0.1:27017/${sanitizedUsername}`, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
+    const userDb = mongoose.createConnection(`${process.env.DATABASE_URL.split('/clusterview')[0]}/${sanitizedUsername}?retryWrites=true&w=majority`, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+  serverSelectionTimeoutMS: 30000,
+  socketTimeoutMS: 45000,
+  connectTimeoutMS: 30000
+});
 
     userDb.once('open', async () => {
       console.log(`Database created: ${sanitizedUsername}`);
