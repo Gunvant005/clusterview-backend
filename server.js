@@ -6,6 +6,10 @@ const multer = require('multer');
 const path = require('path');
 const nodemailer = require('nodemailer');
 const dotenv = require('dotenv');
+const bcrypt = require('bcrypt');
+const cloudinary = require('cloudinary').v2;
+const { Readable } = require('stream');
+
 const app = express();
 
 // Load environment variables
@@ -16,6 +20,23 @@ if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
   console.error('Error: EMAIL_USER and EMAIL_PASS must be defined in the .env file.');
   process.exit(1); // Exit the process if environment variables are missing
 }
+
+if (!process.env.DATABASE_URL) {
+  console.error('Error: DATABASE_URL must be defined in the .env file.');
+  process.exit(1);
+}
+
+if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET) {
+  console.error('Error: Cloudinary environment variables must be defined.');
+  process.exit(1);
+}
+
+// Configure Cloudinary
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
 
 // Middleware
 app.use(cors({
@@ -33,19 +54,11 @@ app.use(cors({
 }));
 app.use(bodyParser.json());
 
-// Serve static files from the uploads folder
+// Serve static files from the uploads folder (not needed for Cloudinary, but kept for compatibility)
 app.use('/uploads', express.static('uploads'));
 
-// Set up multer storage for image uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, 'uploads/');
-  },
-  filename: (req, file, cb) => {
-    cb(null, Date.now() + path.extname(file.originalname));
-  }
-});
-
+// Set up multer with memory storage for Cloudinary uploads
+const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
 // Nodemailer setup with explicit SMTP configuration
@@ -73,7 +86,7 @@ const generateOTP = () => {
   return Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit OTP
 };
 
-// Connect to MongoDB
+// Connect to MongoDB (using Atlas)
 mongoose.connect(process.env.DATABASE_URL, { useNewUrlParser: true, useUnifiedTopology: true })
   .then(() => console.log("MongoDB Connected"))
   .catch((err) => console.error("Connection Error: ", err));
@@ -103,8 +116,6 @@ const userSchema = new mongoose.Schema({
         return /^\d{10}$/.test(v);
       },
       message: 'Contact number must be exactly 10 digits.',
-      
-
     },
   },
   otp: { type: String, required: true },
@@ -166,7 +177,7 @@ const foodSchema = new mongoose.Schema({
 
 const Food = mongoose.model('Food', foodSchema);
 
-// Define Update Food Schema for user personal database
+// Define Update Food Schema for user personal collection (now in main DB)
 const updateFoodSchema = new mongoose.Schema({
   foodId: { type: mongoose.Schema.Types.ObjectId, ref: 'Food', required: true },
   foodname: { type: String },
@@ -180,7 +191,9 @@ const updateFoodSchema = new mongoose.Schema({
   updatedAt: { type: Date, default: Date.now },
 });
 
-// Define Update Room Schema for user personal database
+const UpdateFood = mongoose.model('UpdateFood', updateFoodSchema);
+
+// Define Update Room Schema for user personal collection (now in main DB)
 const updateRoomSchema = new mongoose.Schema({
   roomId: { type: mongoose.Schema.Types.ObjectId, ref: 'Room', required: true },
   roomType: { type: String, required: true },
@@ -203,7 +216,9 @@ const updateRoomSchema = new mongoose.Schema({
   updatedAt: { type: Date, default: Date.now },
 });
 
-// Define Update Job Schema for user personal database
+const UpdateRoom = mongoose.model('UpdateRoom', updateRoomSchema);
+
+// Define Update Job Schema for user personal collection (now in main DB)
 const updateJobSchema = new mongoose.Schema({
   jobId: { type: mongoose.Schema.Types.ObjectId, ref: 'Job', required: true },
   title: { type: String, required: true },
@@ -226,6 +241,20 @@ const updateJobSchema = new mongoose.Schema({
   logo: { type: String },
   updatedAt: { type: Date, default: Date.now },
 });
+
+const UpdateJob = mongoose.model('UpdateJob', updateJobSchema);
+
+// Define UserDetail Schema for user personal details (now in main DB)
+const userDetailSchema = new mongoose.Schema({
+  username: { type: String, required: true },
+  email: { type: String, required: true },
+  password: { type: String, required: true },
+  favoriteAnimal: { type: String, required: true },
+  contactNumber: { type: String, required: true },
+  otp: { type: String }, // Add OTP field in personal database
+});
+
+const UserDetail = mongoose.model('UserDetail', userDetailSchema);
 
 // Define SavedJob Schema and Model
 const savedJobSchema = new mongoose.Schema({
@@ -254,16 +283,29 @@ const savedFoodSchema = new mongoose.Schema({
 
 const SavedFood = mongoose.model('SavedFood', savedFoodSchema);
 
+// Define Query Schema and Model
+const querySchema = new mongoose.Schema({
+  name: { type: String, required: true },
+  email: { type: String, required: true },
+  query: { type: String, required: true },
+  submittedAt: { type: Date, default: Date.now },
+});
+
+const Query = mongoose.model('Query', querySchema);
+
 // Add root route
-app.get('/', (req, res) => {
+app.get('/api/', (req, res) => {
   res.status(200).send('Welcome to the User Authentication API!');
 });
 
+// Add health check route
+app.get('/api/health', (req, res) => res.json({ message: 'Backend alive!' }));
+
 // Send OTP Endpoint - Save OTP to Database with Detailed Logging
-app.post('/send-otp', async (req, res) => {
+app.post('/api/send-otp', async (req, res) => {
   try {
     const { email } = req.body;
-    console.log(`Received /send-otp request with email: ${email}`);
+    console.log(`Received /api/send-otp request with email: ${email}`);
     
     if (!email) {
       console.log('Email is missing in the request');
@@ -311,7 +353,7 @@ app.post('/send-otp', async (req, res) => {
       res.status(200).send({ message: 'OTP sent successfully' });
     });
   } catch (error) {
-    console.error('Error in /send-otp endpoint:', {
+    console.error('Error in /api/send-otp endpoint:', {
       message: error.message,
       stack: error.stack,
     });
@@ -320,7 +362,7 @@ app.post('/send-otp', async (req, res) => {
 });
 
 // Verify OTP Endpoint - Retrieve OTP from Database
-app.post('/verify-otp', async (req, res) => {
+app.post('/api/verify-otp', async (req, res) => {
   try {
     const { email, otp } = req.body;
     if (!email || !otp) {
@@ -352,8 +394,9 @@ app.post('/verify-otp', async (req, res) => {
   }
 });
 
-// Register Endpoint - Update to Delete OTP After Registration
-app.post('/register', async (req, res) => {
+// Register Endpoint - Update to Delete OTP After Registration, Hash Password
+const SALT_ROUNDS = 10;
+app.post('/api/register', async (req, res) => {
   try {
     const { username, email, password, favoriteAnimal, contactNumber } = req.body;
     if (!username || !email || !password || !favoriteAnimal || !contactNumber) {
@@ -366,59 +409,35 @@ app.post('/register', async (req, res) => {
       return res.status(400).send({ error: 'OTP verification required' });
     }
 
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
+
     // Create new user with OTP
     const newUser = new User({
       username,
       email,
-      password,
+      password: hashedPassword,
       favoriteAnimal,
       contactNumber,
       otp: storedOtp.otp, // Save the OTP in the users collection
     });
     await newUser.save();
 
-    const sanitizedUsername = username.replace(/\s+/g, '_');
-    const userDb = mongoose.createConnection(`${process.env.DATABASE_URL.split('/clusterview')[0]}/${sanitizedUsername}?retryWrites=true&w=majority`, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-  serverSelectionTimeoutMS: 30000,
-  socketTimeoutMS: 45000,
-  connectTimeoutMS: 30000
-});
-
-    userDb.once('open', async () => {
-      console.log(`Database created: ${sanitizedUsername}`);
-
-      const userDetailSchema = new mongoose.Schema({
-        username: { type: String, required: true },
-        email: { type: String, required: true },
-        password: { type: String, required: true },
-        favoriteAnimal: { type: String, required: true },
-        contactNumber: { type: String, required: true },
-        otp: { type: String }, // Add OTP field in personal database
-      });
-
-      const UserDetail = userDb.model('user_detail', userDetailSchema);
-      const userDetail = new UserDetail({
-        username,
-        email,
-        password,
-        favoriteAnimal,
-        contactNumber,
-        otp: storedOtp.otp, // Save the OTP in the personal database
-      });
-      await userDetail.save();
-
-      // Delete OTP from database after successful registration
-      await Otp.deleteOne({ email });
-
-      res.status(201).send({ message: 'User Registered Successfully' });
+    // Save to UserDetail collection (in main DB)
+    const userDetail = new UserDetail({
+      username,
+      email,
+      password: hashedPassword,
+      favoriteAnimal,
+      contactNumber,
+      otp: storedOtp.otp, // Save the OTP in the personal collection
     });
+    await userDetail.save();
 
-    userDb.on('error', (err) => {
-      console.error('Error creating user\'s personal database:', err);
-      res.status(500).send({ error: 'Database creation failed' });
-    });
+    // Delete OTP from database after successful registration
+    await Otp.deleteOne({ email });
+
+    res.status(201).send({ message: 'User Registered Successfully' });
   } catch (error) {
     if (error.code === 11000) {
       return res.status(400).send({ error: 'Email already exists' });
@@ -427,8 +446,8 @@ app.post('/register', async (req, res) => {
   }
 });
 
-// Login Endpoint
-app.post('/login', async (req, res) => {
+// Login Endpoint - Compare Hashed Password
+app.post('/api/login', async (req, res) => {
   try {
     const { email, password } = req.body;
     if (!email || !password) {
@@ -436,7 +455,7 @@ app.post('/login', async (req, res) => {
     }
 
     const user = await User.findOne({ email });
-    if (!user || user.password !== password) {
+    if (!user || !(await bcrypt.compare(password, user.password))) {
       return res.status(400).send({ error: 'Invalid Email or Password' });
     }
 
@@ -446,8 +465,8 @@ app.post('/login', async (req, res) => {
   }
 });
 
-// Forgot Password Endpoint
-app.post('/forgot-password', async (req, res) => {
+// Forgot Password Endpoint - Return Hashed Password? (Note: Better to reset, but kept as is)
+app.post('/api/forgot-password', async (req, res) => {
   try {
     const { email, favoriteAnimal } = req.body;
     if (!email || !favoriteAnimal) {
@@ -459,36 +478,46 @@ app.post('/forgot-password', async (req, res) => {
       return res.status(400).send({ error: 'No matching user found' });
     }
 
-    res.status(200).send({ password: user.password });
+    res.status(200).send({ password: user.password }); // Note: This returns hashed password; consider reset flow
   } catch (error) {
     res.status(500).send({ error: error.message });
   }
 });
 
-// Insert Room Endpoint
-app.post('/insert-room', upload.array('images', 10), async (req, res) => {
+// Insert Room Endpoint - Use Cloudinary
+app.post('/api/insert-room', upload.array('images', 10), async (req, res) => {
   try {
     const { roomType, price, location, contactNo, forroom, availability, email, password } = req.body;
-    const images = req.files.map(file => file.path);
 
-    const user = await User.findOne({ email, password });
-    if (!user) {
+    const user = await User.findOne({ email });
+    if (!user || !(await bcrypt.compare(password, user.password))) {
       return res.status(401).send({ error: 'Unauthorized: Invalid email or password' });
     }
 
-    const newRoom = new Room({ roomType, price, location, contactNo, forroom, availability, images, userId: user._id });
-    await newRoom.save();
+    const images = [];
+    for (const file of req.files) {
+      const uploadStream = cloudinary.uploader.upload_stream({ resource_type: 'image' }, (error, result) => {
+        if (error) {
+          console.error('Cloudinary upload error:', error);
+          return res.status(500).send({ error: 'Upload failed' });
+        }
+        images.push(result.secure_url);
+        if (images.length === req.files.length) {
+          saveRoom();
+        }
+      });
+      Readable.from(file.buffer).pipe(uploadStream);
+    }
 
-    // Save initial data to user's personal database
-    const sanitizedUsername = user.username.replace(/\s+/g, '_');
-    const userDb = mongoose.createConnection(`mongodb://127.0.0.1:27017/${sanitizedUsername}`, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
+    if (req.files.length === 0) {
+      saveRoom();
+    }
 
-    userDb.once('open', async () => {
-      console.log(`Connected to user's personal database: ${sanitizedUsername}`);
-      const UpdateRoom = userDb.model('update_room', updateRoomSchema, 'update_room');
+    async function saveRoom() {
+      const newRoom = new Room({ roomType, price, location, contactNo, forroom, availability, images, userId: user._id });
+      await newRoom.save();
+
+      // Save initial data to UpdateRoom collection
       const updateRoom = new UpdateRoom({
         roomId: newRoom._id,
         roomType,
@@ -501,42 +530,48 @@ app.post('/insert-room', upload.array('images', 10), async (req, res) => {
         userId: user._id,
       });
       await updateRoom.save();
-    });
 
-    userDb.on('error', (err) => {
-      console.error("Error connecting to user's personal database:", err);
-    });
-
-    res.status(201).send({ message: "Room Inserted Successfully" });
+      res.status(201).send({ message: "Room Inserted Successfully" });
+    }
   } catch (error) {
     res.status(500).send({ error: error.message });
   }
 });
 
-// Insert Food Endpoint
-app.post('/insert-food', upload.array('images', 10), async (req, res) => {
+// Insert Food Endpoint - Use Cloudinary
+app.post('/api/insert-food', upload.array('images', 10), async (req, res) => {
   try {
     const { foodname, shopname, description, price, category, address, email, password } = req.body;
-    const image = req.files.map(file => file.path);
 
-    const user = await User.findOne({ email, password });
-    if (!user) {
+    const user = await User.findOne({ email });
+    if (!user || !(await bcrypt.compare(password, user.password))) {
       return res.status(401).send({ error: 'Unauthorized: Invalid email or password' });
     }
 
-    const newFood = new Food({ foodname, shopname, description, price, category, address, image, userId: user._id });
-    await newFood.save();
+    const images = [];
+    for (const file of req.files) {
+      const uploadStream = cloudinary.uploader.upload_stream({ resource_type: 'image' }, (error, result) => {
+        if (error) {
+          console.error('Cloudinary upload error:', error);
+          return res.status(500).send({ error: 'Upload failed' });
+        }
+        images.push(result.secure_url);
+        if (images.length === req.files.length) {
+          saveFood();
+        }
+      });
+      Readable.from(file.buffer).pipe(uploadStream);
+    }
 
-    // Save initial data to user's personal database
-    const sanitizedUsername = user.username.replace(/\s+/g, '_');
-    const userDb = mongoose.createConnection(`mongodb://127.0.0.1:27017/${sanitizedUsername}`, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
+    if (req.files.length === 0) {
+      saveFood();
+    }
 
-    userDb.once('open', async () => {
-      console.log(`Connected to user's personal database: ${sanitizedUsername}`);
-      const UpdateFood = userDb.model('update_food', updateFoodSchema, 'update_food');
+    async function saveFood() {
+      const newFood = new Food({ foodname, shopname, description, price, category, address, image: images, userId: user._id });
+      await newFood.save();
+
+      // Save initial data to UpdateFood collection
       const updateFood = new UpdateFood({
         foodId: newFood._id,
         foodname,
@@ -545,24 +580,20 @@ app.post('/insert-food', upload.array('images', 10), async (req, res) => {
         price,
         category,
         address,
-        image,
+        image: images,
         userId: user._id,
       });
       await updateFood.save();
-    });
 
-    userDb.on('error', (err) => {
-      console.error("Error connecting to user's personal database:", err);
-    });
-
-    res.status(201).send({ message: "Food Inserted Successfully" });
+      res.status(201).send({ message: "Food Inserted Successfully" });
+    }
   } catch (error) {
     res.status(500).send({ error: error.message });
   }
 });
 
-// Insert Job Endpoint
-app.post('/insert-job', upload.single('logo'), async (req, res) => {
+// Insert Job Endpoint - Use Cloudinary for logo
+app.post('/api/insert-job', upload.single('logo'), async (req, res) => {
   try {
     const {
       title, description, company, location, salary,
@@ -572,32 +603,38 @@ app.post('/insert-job', upload.single('logo'), async (req, res) => {
       email, password
     } = req.body;
 
-    const user = await User.findOne({ email, password });
-    if (!user) {
+    const user = await User.findOne({ email });
+    if (!user || !(await bcrypt.compare(password, user.password))) {
       return res.status(401).send({ error: 'Unauthorized: Invalid email or password' });
     }
 
-    const logo = req.file ? req.file.path : null;
+    let logo = null;
+    if (req.file) {
+      const uploadStream = cloudinary.uploader.upload_stream({ resource_type: 'image' }, (error, result) => {
+        if (error) {
+          console.error('Cloudinary upload error:', error);
+          return res.status(500).send({ error: 'Upload failed' });
+        }
+        logo = result.secure_url;
+        saveJob();
+      });
+      Readable.from(req.file.buffer).pipe(uploadStream);
+    } else {
+      saveJob();
+    }
 
-    const newJob = new Job({
-      title, description, company, location, salary,
-      vacancies, experience, skills: skills.split(','),
-      qualification, industryType, employmentType, education,
-      userId: user._id,
-      logo,
-      contactEmail
-    });
-    await newJob.save();
+    async function saveJob() {
+      const newJob = new Job({
+        title, description, company, location, salary,
+        vacancies, experience, skills: skills.split(','),
+        qualification, industryType, employmentType, education,
+        userId: user._id,
+        logo,
+        contactEmail
+      });
+      await newJob.save();
 
-    // Update personal database
-    const sanitizedUsername = user.username.replace(/\s+/g, '_');
-    const userDb = mongoose.createConnection(`mongodb://127.0.0.1:27017/${sanitizedUsername}`, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
-
-    userDb.once('open', async () => {
-      const UpdateJob = userDb.model('update_job', updateJobSchema);
+      // Save to UpdateJob collection
       const updateJob = new UpdateJob({
         jobId: newJob._id,
         title, description, company, location, salary,
@@ -608,22 +645,22 @@ app.post('/insert-job', upload.single('logo'), async (req, res) => {
         contactEmail
       });
       await updateJob.save();
-    });
 
-    res.status(201).send({ message: "Job Inserted Successfully", job: newJob });
+      res.status(201).send({ message: "Job Inserted Successfully", job: newJob });
+    }
   } catch (error) {
     res.status(500).send({ error: error.message });
   }
 });
 
 // Fetch User Details Endpoint
-app.post('/get-user-details', async (req, res) => {
+app.post('/api/get-user-details', async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    const user = await User.findOne({ email, password });
-    if (!user) {
-      return res.status(404).json({ error: "User not found" });
+    const user = await User.findOne({ email });
+    if (!user || !(await bcrypt.compare(password, user.password))) {
+      return res.status(401).json({ error: 'Invalid email or password' });
     }
 
     res.status(200).json(user);
@@ -632,9 +669,9 @@ app.post('/get-user-details', async (req, res) => {
   }
 });
 
-// Update User Details Endpoint
-app.post('/update-user-details', async (req, res) => {
-  const { email, password, username, favoriteAnimal, contactNumber } = req.body;
+// Update User Details Endpoint - Hash Password if Updated
+app.post('/api/update-user-details', async (req, res) => {
+  const { email, password, username, favoriteAnimal, contactNumber, newPassword } = req.body; // Added newPassword if changing
 
   // Validate contactNumber
   if (contactNumber && !/^\d{10}$/.test(contactNumber)) {
@@ -642,8 +679,8 @@ app.post('/update-user-details', async (req, res) => {
   }
 
   try {
-    const user = await User.findOne({ email, password });
-    if (!user) {
+    const user = await User.findOne({ email });
+    if (!user || !(await bcrypt.compare(password, user.password))) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
@@ -651,62 +688,35 @@ app.post('/update-user-details', async (req, res) => {
     user.username = username || user.username;
     user.favoriteAnimal = favoriteAnimal || user.favoriteAnimal;
     user.contactNumber = contactNumber || user.contactNumber;
+    if (newPassword) {
+      user.password = await bcrypt.hash(newPassword, SALT_ROUNDS);
+    }
     await user.save();
 
-    // Update user's personal database
-    const sanitizedUsername = user.username.replace(/\s+/g, '_');
-    const userDb = mongoose.createConnection(`mongodb://127.0.0.1:27017/${sanitizedUsername}`, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
-
-    userDb.once('open', async () => {
-      console.log(`Connected to the personal database: ${sanitizedUsername}`);
-
-      const userDetailSchema = new mongoose.Schema({
-        username: { type: String, required: true },
-        email: { type: String, required: true },
-        password: { type: String, required: true },
-        favoriteAnimal: { type: String, required: true },
-        contactNumber: {
-          type: String,
-          required: true,
-          validate: {
-            validator: function (v) {
-              return /^\d{10}$/.test(v);
-            },
-            message: 'Contact number must be exactly 10 digits.',
-          },
-        },
-      });
-
-      const UserDetail = userDb.model('user_detail', userDetailSchema);
-      const userDetail = await UserDetail.findOne({ email });
-      if (userDetail) {
-        userDetail.username = username || userDetail.username;
-        userDetail.favoriteAnimal = favoriteAnimal || userDetail.favoriteAnimal;
-        userDetail.contactNumber = contactNumber || userDetail.contactNumber;
-        await userDetail.save();
-      } else {
-        const newUserDetail = new UserDetail({
-          username: user.username,
-          email: user.email,
-          password: user.password,
-          favoriteAnimal: user.favoriteAnimal,
-          contactNumber: user.contactNumber,
-        });
-        await newUserDetail.save();
+    // Update UserDetail collection
+    let userDetail = await UserDetail.findOne({ email });
+    if (userDetail) {
+      userDetail.username = username || userDetail.username;
+      userDetail.favoriteAnimal = favoriteAnimal || userDetail.favoriteAnimal;
+      userDetail.contactNumber = contactNumber || userDetail.contactNumber;
+      if (newPassword) {
+        userDetail.password = user.password;
       }
-
-      res.json({
-        message: 'User details updated successfully in both main and personal database',
-        updatedUser: user,
+      await userDetail.save();
+    } else {
+      userDetail = new UserDetail({
+        username: user.username,
+        email: user.email,
+        password: user.password,
+        favoriteAnimal: user.favoriteAnimal,
+        contactNumber: user.contactNumber,
       });
-    });
+      await userDetail.save();
+    }
 
-    userDb.on('error', (err) => {
-      console.error("Error connecting to user's personal database:", err);
-      res.status(500).json({ error: 'Failed to update user in personal database' });
+    res.json({
+      message: 'User details updated successfully in both main and personal collection',
+      updatedUser: user,
     });
   } catch (error) {
     console.error('Error updating user details:', error);
@@ -715,12 +725,12 @@ app.post('/update-user-details', async (req, res) => {
 });
 
 // Fetch Food Endpoint (User-specific)
-app.post('/fetch-food', async (req, res) => {
+app.post('/api/fetch-food', async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    const user = await User.findOne({ email, password });
-    if (!user) {
+    const user = await User.findOne({ email });
+    if (!user || !(await bcrypt.compare(password, user.password))) {
       return res.status(401).send({ error: 'Unauthorized: Invalid email or password' });
     }
 
@@ -732,12 +742,12 @@ app.post('/fetch-food', async (req, res) => {
 });
 
 // Fetch Rooms Endpoint (User-specific)
-app.post('/fetch-rooms', async (req, res) => {
+app.post('/api/fetch-rooms', async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    const user = await User.findOne({ email, password });
-    if (!user) {
+    const user = await User.findOne({ email });
+    if (!user || !(await bcrypt.compare(password, user.password))) {
       return res.status(401).send({ error: 'Unauthorized: Invalid email or password' });
     }
 
@@ -749,12 +759,12 @@ app.post('/fetch-rooms', async (req, res) => {
 });
 
 // Search Room Endpoint (User-specific POST)
-app.post('/search-room', async (req, res) => {
+app.post('/api/search-room', async (req, res) => {
   try {
     const { email, password, type, priceRange, location } = req.body;
 
-    const user = await User.findOne({ email, password });
-    if (!user) {
+    const user = await User.findOne({ email });
+    if (!user || !(await bcrypt.compare(password, user.password))) {
       return res.status(401).send({ error: 'Unauthorized: Invalid email or password' });
     }
 
@@ -786,7 +796,7 @@ app.post('/search-room', async (req, res) => {
 });
 
 // Save Room Endpoint
-app.post('/save-room', async (req, res) => {
+app.post('/api/save-room', async (req, res) => {
   try {
     const { userEmail, room } = req.body;
 
@@ -810,7 +820,7 @@ app.post('/save-room', async (req, res) => {
 });
 
 // Get Saved Rooms Endpoint
-app.get('/get-saved-rooms', async (req, res) => {
+app.get('/api/get-saved-rooms', async (req, res) => {
   try {
     const { email } = req.query;
 
@@ -827,7 +837,7 @@ app.get('/get-saved-rooms', async (req, res) => {
 });
 
 // Unsave Room Endpoint
-app.delete('/unsave-room', async (req, res) => {
+app.delete('/api/unsave-room', async (req, res) => {
   try {
     const { userEmail, roomId } = req.body;
 
@@ -848,12 +858,12 @@ app.delete('/unsave-room', async (req, res) => {
 });
 
 // Search Food Endpoint
-app.post('/search-food', async (req, res) => {
+app.post('/api/search-food', async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    const user = await User.findOne({ email, password });
-    if (!user) {
+    const user = await User.findOne({ email });
+    if (!user || !(await bcrypt.compare(password, user.password))) {
       return res.status(401).send({ error: 'Unauthorized: Invalid email or password' });
     }
 
@@ -865,7 +875,7 @@ app.post('/search-food', async (req, res) => {
 });
 
 // Save Food Endpoint
-app.post('/save-food', async (req, res) => {
+app.post('/api/save-food', async (req, res) => {
   try {
     const { userEmail, food } = req.body;
 
@@ -889,7 +899,7 @@ app.post('/save-food', async (req, res) => {
 });
 
 // Get Saved Foods Endpoint
-app.get('/get-saved-foods', async (req, res) => {
+app.get('/api/get-saved-foods', async (req, res) => {
   try {
     const { email } = req.query;
 
@@ -906,7 +916,7 @@ app.get('/get-saved-foods', async (req, res) => {
 });
 
 // Unsave Food Endpoint
-app.delete('/unsave-food', async (req, res) => {
+app.delete('/api/unsave-food', async (req, res) => {
   try {
     const { userEmail, foodId } = req.body;
 
@@ -927,7 +937,7 @@ app.delete('/unsave-food', async (req, res) => {
 });
 
 // Search Job Endpoint (GET)
-app.get('/search-job', async (req, res) => {
+app.get('/api/search-job', async (req, res) => {
   try {
     const { query } = req.query;
 
@@ -950,12 +960,12 @@ app.get('/search-job', async (req, res) => {
 });
 
 // Search Job Endpoint (POST)
-app.post('/search-job', async (req, res) => {
+app.post('/api/search-job', async (req, res) => {
   try {
     const { query, email, password } = req.body;
 
-    const user = await User.findOne({ email, password });
-    if (!user) {
+    const user = await User.findOne({ email });
+    if (!user || !(await bcrypt.compare(password, user.password))) {
       return res.status(401).send({ error: 'Unauthorized: Invalid email or password' });
     }
 
@@ -978,7 +988,7 @@ app.post('/search-job', async (req, res) => {
 });
 
 // Get Saved Jobs Endpoint
-app.get('/get-saved-jobs', async (req, res) => {
+app.get('/api/get-saved-jobs', async (req, res) => {
   try {
     const { email } = req.query;
 
@@ -995,7 +1005,7 @@ app.get('/get-saved-jobs', async (req, res) => {
 });
 
 // Save Job Endpoint
-app.post('/save-job', async (req, res) => {
+app.post('/api/save-job', async (req, res) => {
   try {
     const { userEmail, job } = req.body;
 
@@ -1019,7 +1029,7 @@ app.post('/save-job', async (req, res) => {
 });
 
 // Unsave Job Endpoint
-app.delete('/unsave-job', async (req, res) => {
+app.delete('/api/unsave-job', async (req, res) => {
   try {
     const { userEmail, jobId } = req.body;
 
@@ -1041,10 +1051,10 @@ app.delete('/unsave-job', async (req, res) => {
 
 // AdminPanel
 const ADMIN_EMAIL = 'Admin@gmail.com';
-const ADMIN_PASSWORD = '123';
+const ADMIN_PASSWORD = '123'; // Note: Hardcoded for now; move to env vars or hash
 
 // Fetch All Rooms Endpoint (for Admin Panel)
-app.get('/fetch-all-rooms', async (req, res) => {
+app.get('/api/fetch-all-rooms', async (req, res) => {
   try {
     const { email, password } = req.query;
 
@@ -1060,7 +1070,7 @@ app.get('/fetch-all-rooms', async (req, res) => {
 });
 
 // Fetch All Foods Endpoint (for Admin Panel)
-app.get('/fetch-all-foods', async (req, res) => {
+app.get('/api/fetch-all-foods', async (req, res) => {
   try {
     const { email, password } = req.query;
 
@@ -1076,7 +1086,7 @@ app.get('/fetch-all-foods', async (req, res) => {
 });
 
 // Fetch All Jobs Endpoint (for Admin Panel)
-app.get('/fetch-all-jobs', async (req, res) => {
+app.get('/api/fetch-all-jobs', async (req, res) => {
   try {
     const { email, password } = req.query;
 
@@ -1091,16 +1101,18 @@ app.get('/fetch-all-jobs', async (req, res) => {
   }
 });
 
-// Modify Update Room Endpoint to Allow Admin Access
-app.post('/update-room', upload.array('images', 10), async (req, res) => {
+// Modify Update Room Endpoint to Allow Admin Access - Use Cloudinary
+app.post('/api/update-room', upload.array('images', 10), async (req, res) => {
   try {
     const { roomId, roomType, price, location, contactNo, forroom, availability, existingImages, email, password } = req.body;
-    const newImages = req.files ? req.files.map(file => file.path) : [];
 
     const isAdmin = email === ADMIN_EMAIL && password === ADMIN_PASSWORD;
-    const user = await User.findOne({ email, password });
-
-    if (!isAdmin && !user) {
+    const user = await User.findOne({ email });
+    let authValid = isAdmin;
+    if (!isAdmin) {
+      authValid = user && await bcrypt.compare(password, user.password);
+    }
+    if (!authValid) {
       return res.status(401).send({ error: 'Unauthorized: Invalid email or password' });
     }
 
@@ -1120,56 +1132,59 @@ app.post('/update-room', upload.array('images', 10), async (req, res) => {
     room.forroom = forroom || room.forroom;
     room.availability = availability !== undefined ? availability : room.availability;
 
-    const updatedImages = existingImages
-      ? (Array.isArray(existingImages) ? existingImages : [existingImages]).concat(newImages)
-      : newImages.length > 0 ? newImages : room.images;
-    room.images = updatedImages;
+    let updatedImages = existingImages
+      ? (Array.isArray(existingImages) ? existingImages : [existingImages])
+      : room.images;
 
+    if (req.files.length > 0) {
+      for (const file of req.files) {
+        const uploadStream = cloudinary.uploader.upload_stream({ resource_type: 'image' }, (error, result) => {
+          if (error) throw error;
+        });
+        Readable.from(file.buffer).pipe(uploadStream);
+        updatedImages.push(result.secure_url);
+      }
+    }
+
+    room.images = updatedImages;
     await room.save();
 
     if (!isAdmin) {
-      const sanitizedUsername = user.username.replace(/\s+/g, '_');
-      const userDb = mongoose.createConnection(`mongodb://127.0.0.1:27017/${sanitizedUsername}`, {
-        useNewUrlParser: true,
-        useUnifiedTopology: true,
-      });
-
-      userDb.once('open', async () => {
-        const UpdateRoom = userDb.model('update_room', updateRoomSchema, 'update_room');
-        await UpdateRoom.findOneAndUpdate(
-          { roomId: room._id, userId: user._id },
-          {
-            roomType: room.roomType,
-            price: room.price,
-            location: room.location,
-            contactNo: room.contactNo,
-            forroom: room.forroom,
-            availability: room.availability,
-            images: updatedImages,
-            updatedAt: new Date(),
-          },
-          { upsert: true, new: true }
-        );
-      });
+      await UpdateRoom.findOneAndUpdate(
+        { roomId: room._id, userId: user._id },
+        {
+          roomType: room.roomType,
+          price: room.price,
+          location: room.location,
+          contactNo: room.contactNo,
+          forroom: room.forroom,
+          availability: room.availability,
+          images: updatedImages,
+          updatedAt: new Date(),
+        },
+        { upsert: true, new: true }
+      );
     }
 
     res.status(200).send({ message: 'Room updated successfully', room });
   } catch (error) {
-    console.error('Error in /update-room:', error);
+    console.error('Error in /api/update-room:', error);
     res.status(500).send({ error: error.message });
   }
 });
 
-// Modify Update Food Endpoint to Allow Admin Access
-app.post('/update-food', upload.array('images', 10), async (req, res) => {
+// Modify Update Food Endpoint to Allow Admin Access - Use Cloudinary
+app.post('/api/update-food', upload.array('images', 10), async (req, res) => {
   try {
     const { foodId, foodname, shopname, description, price, category, address, existingImages, email, password } = req.body;
-    const newImages = req.files ? req.files.map(file => file.path) : [];
 
     const isAdmin = email === ADMIN_EMAIL && password === ADMIN_PASSWORD;
-    const user = await User.findOne({ email, password });
-
-    if (!isAdmin && !user) {
+    const user = await User.findOne({ email });
+    let authValid = isAdmin;
+    if (!isAdmin) {
+      authValid = user && await bcrypt.compare(password, user.password);
+    }
+    if (!authValid) {
       return res.status(401).send({ error: 'Unauthorized: Invalid email or password' });
     }
 
@@ -1189,48 +1204,49 @@ app.post('/update-food', upload.array('images', 10), async (req, res) => {
     food.category = category || food.category;
     food.address = address || food.address;
 
-    const updatedImages = existingImages
-      ? (Array.isArray(existingImages) ? existingImages : [existingImages]).concat(newImages)
-      : newImages.length > 0 ? newImages : food.image;
-    food.image = updatedImages;
+    let updatedImages = existingImages
+      ? (Array.isArray(existingImages) ? existingImages : [existingImages])
+      : food.image;
 
+    if (req.files.length > 0) {
+      for (const file of req.files) {
+        const uploadStream = cloudinary.uploader.upload_stream({ resource_type: 'image' }, (error, result) => {
+          if (error) throw error;
+        });
+        Readable.from(file.buffer).pipe(uploadStream);
+        updatedImages.push(result.secure_url);
+      }
+    }
+
+    food.image = updatedImages;
     await food.save();
 
     if (!isAdmin) {
-      const sanitizedUsername = user.username.replace(/\s+/g, '_');
-      const userDb = mongoose.createConnection(`mongodb://127.0.0.1:27017/${sanitizedUsername}`, {
-        useNewUrlParser: true,
-        useUnifiedTopology: true,
-      });
-
-      userDb.once('open', async () => {
-        const UpdateFood = userDb.model('update_food', updateFoodSchema, 'update_food');
-        await UpdateFood.findOneAndUpdate(
-          { foodId: food._id, userId: user._id },
-          {
-            foodname: food.foodname,
-            shopname: food.shopname,
-            description: food.description,
-            price: food.price,
-            category: food.category,
-            address: food.address,
-            image: updatedImages,
-            updatedAt: new Date(),
-          },
-          { upsert: true, new: true }
-        );
-      });
+      await UpdateFood.findOneAndUpdate(
+        { foodId: food._id, userId: user._id },
+        {
+          foodname: food.foodname,
+          shopname: food.shopname,
+          description: food.description,
+          price: food.price,
+          category: food.category,
+          address: food.address,
+          image: updatedImages,
+          updatedAt: new Date(),
+        },
+        { upsert: true, new: true }
+      );
     }
 
     res.status(200).send({ message: 'Food updated successfully', food });
   } catch (error) {
-    console.error('Error in /update-food:', error);
+    console.error('Error in /api/update-food:', error);
     res.status(500).send({ error: error.message });
   }
 });
 
-// Modify Update Job Endpoint to Allow Admin Access
-app.post('/update-job', upload.single('logo'), async (req, res) => {
+// Modify Update Job Endpoint to Allow Admin Access - Use Cloudinary
+app.post('/api/update-job', upload.single('logo'), async (req, res) => {
   try {
     const {
       jobId, title, description, company, location, salary,
@@ -1240,9 +1256,12 @@ app.post('/update-job', upload.single('logo'), async (req, res) => {
     } = req.body;
 
     const isAdmin = email === ADMIN_EMAIL && password === ADMIN_PASSWORD;
-    const user = await User.findOne({ email, password });
-
-    if (!isAdmin && !user) {
+    const user = await User.findOne({ email });
+    let authValid = isAdmin;
+    if (!isAdmin) {
+      authValid = user && await bcrypt.compare(password, user.password);
+    }
+    if (!authValid) {
       return res.status(401).send({ error: 'Unauthorized: Invalid email or password' });
     }
 
@@ -1255,7 +1274,14 @@ app.post('/update-job', upload.single('logo'), async (req, res) => {
       return res.status(403).send({ error: 'You don’t have permission to modify this job' });
     }
 
-    const logo = req.file ? req.file.path : job.logo;
+    let logo = job.logo;
+    if (req.file) {
+      const uploadStream = cloudinary.uploader.upload_stream({ resource_type: 'image' }, (error, result) => {
+        if (error) throw error;
+        logo = result.secure_url;
+      });
+      Readable.from(req.file.buffer).pipe(uploadStream);
+    }
 
     job.title = title || job.title;
     job.description = description || job.description;
@@ -1275,36 +1301,27 @@ app.post('/update-job', upload.single('logo'), async (req, res) => {
     await job.save();
 
     if (!isAdmin) {
-      const sanitizedUsername = user.username.replace(/\s+/g, '_');
-      const userDb = mongoose.createConnection(`mongodb://127.0.0.1:27017/${sanitizedUsername}`, {
-        useNewUrlParser: true,
-        useUnifiedTopology: true,
-      });
-
-      userDb.once('open', async () => {
-        const UpdateJob = userDb.model('update_job', updateJobSchema);
-        await UpdateJob.findOneAndUpdate(
-          { jobId: job._id, userId: user._id },
-          {
-            title: job.title,
-            description: job.description,
-            company: job.company,
-            location: job.location,
-            salary: job.salary,
-            vacancies: job.vacancies,
-            experience: job.experience,
-            skills: job.skills,
-            qualification: job.qualification,
-            industryType: job.industryType,
-            employmentType: job.employmentType,
-            education: job.education,
-            logo: job.logo,
-            contactEmail: job.contactEmail,
-            updatedAt: new Date(),
-          },
-          { upsert: true, new: true }
-        );
-      });
+      await UpdateJob.findOneAndUpdate(
+        { jobId: job._id, userId: user._id },
+        {
+          title: job.title,
+          description: job.description,
+          company: job.company,
+          location: job.location,
+          salary: job.salary,
+          vacancies: job.vacancies,
+          experience: job.experience,
+          skills: job.skills,
+          qualification: job.qualification,
+          industryType: job.industryType,
+          employmentType: job.employmentType,
+          education: job.education,
+          logo: job.logo,
+          contactEmail: job.contactEmail,
+          updatedAt: new Date(),
+        },
+        { upsert: true, new: true }
+      );
     }
 
     res.status(200).send({ message: 'Job updated successfully', job });
@@ -1314,14 +1331,17 @@ app.post('/update-job', upload.single('logo'), async (req, res) => {
 });
 
 // Modify Delete Room Endpoint to Allow Admin Access
-app.post('/delete-room', async (req, res) => {
+app.post('/api/delete-room', async (req, res) => {
   try {
     const { roomId, email, password } = req.body;
 
     const isAdmin = email === ADMIN_EMAIL && password === ADMIN_PASSWORD;
-    const user = await User.findOne({ email, password });
-
-    if (!isAdmin && !user) {
+    const user = await User.findOne({ email });
+    let authValid = isAdmin;
+    if (!isAdmin) {
+      authValid = user && await bcrypt.compare(password, user.password);
+    }
+    if (!authValid) {
       return res.status(401).send({ error: 'Unauthorized: Invalid email or password' });
     }
 
@@ -1337,34 +1357,28 @@ app.post('/delete-room', async (req, res) => {
     await Room.deleteOne({ _id: roomId });
 
     if (!isAdmin) {
-      const sanitizedUsername = user.username.replace(/\s+/g, '_');
-      const userDb = mongoose.createConnection(`mongodb://127.0.0.1:27017/${sanitizedUsername}`, {
-        useNewUrlParser: true,
-        useUnifiedTopology: true,
-      });
-
-      userDb.once('open', async () => {
-        const UpdateRoom = userDb.model('update_room', updateRoomSchema, 'update_room');
-        await UpdateRoom.deleteOne({ roomId: roomId, userId: user._id });
-      });
+      await UpdateRoom.deleteOne({ roomId: roomId, userId: user._id });
     }
 
     res.status(200).send({ message: 'Room deleted successfully' });
   } catch (error) {
-    console.error('Error in /delete-room:', error);
+    console.error('Error in /api/delete-room:', error);
     res.status(500).send({ error: error.message });
   }
 });
 
 // Modify Delete Food Endpoint to Allow Admin Access
-app.post('/delete-food', async (req, res) => {
+app.post('/api/delete-food', async (req, res) => {
   try {
     const { foodId, email, password } = req.body;
 
     const isAdmin = email === ADMIN_EMAIL && password === ADMIN_PASSWORD;
-    const user = await User.findOne({ email, password });
-
-    if (!isAdmin && !user) {
+    const user = await User.findOne({ email });
+    let authValid = isAdmin;
+    if (!isAdmin) {
+      authValid = user && await bcrypt.compare(password, user.password);
+    }
+    if (!authValid) {
       return res.status(401).send({ error: 'Unauthorized: Invalid email or password' });
     }
 
@@ -1380,34 +1394,28 @@ app.post('/delete-food', async (req, res) => {
     await Food.deleteOne({ _id: foodId });
 
     if (!isAdmin) {
-      const sanitizedUsername = user.username.replace(/\s+/g, '_');
-      const userDb = mongoose.createConnection(`mongodb://127.0.0.1:27017/${sanitizedUsername}`, {
-        useNewUrlParser: true,
-        useUnifiedTopology: true,
-      });
-
-      userDb.once('open', async () => {
-        const UpdateFood = userDb.model('update_food', updateFoodSchema, 'update_food');
-        await UpdateFood.deleteOne({ foodId: foodId, userId: user._id });
-      });
+      await UpdateFood.deleteOne({ foodId: foodId, userId: user._id });
     }
 
     res.status(200).send({ message: 'Food deleted successfully' });
   } catch (error) {
-    console.error('Error in /delete-food:', error);
+    console.error('Error in /api/delete-food:', error);
     res.status(500).send({ error: error.message });
   }
 });
 
 // Modify Delete Job Endpoint to Allow Admin Access
-app.post('/delete-job', async (req, res) => {
+app.post('/api/delete-job', async (req, res) => {
   try {
     const { jobId, email, password } = req.body;
 
     const isAdmin = email === ADMIN_EMAIL && password === ADMIN_PASSWORD;
-    const user = await User.findOne({ email, password });
-
-    if (!isAdmin && !user) {
+    const user = await User.findOne({ email });
+    let authValid = isAdmin;
+    if (!isAdmin) {
+      authValid = user && await bcrypt.compare(password, user.password);
+    }
+    if (!authValid) {
       return res.status(401).send({ error: 'Unauthorized: Invalid email or password' });
     }
 
@@ -1423,27 +1431,18 @@ app.post('/delete-job', async (req, res) => {
     await Job.deleteOne({ _id: jobId });
 
     if (!isAdmin) {
-      const sanitizedUsername = user.username.replace(/\s+/g, '_');
-      const userDb = mongoose.createConnection(`mongodb://127.0.0.1:27017/${sanitizedUsername}`, {
-        useNewUrlParser: true,
-        useUnifiedTopology: true,
-      });
-
-      userDb.once('open', async () => {
-        const UpdateJob = userDb.model('update_job', updateJobSchema, 'update_job');
-        await UpdateJob.deleteOne({ jobId: jobId, userId: user._id });
-      });
+      await UpdateJob.deleteOne({ jobId: jobId, userId: user._id });
     }
 
     res.status(200).send({ message: 'Job deleted successfully' });
   } catch (error) {
-    console.error('Error in /delete-job:', error);
+    console.error('Error in /api/delete-job:', error);
     res.status(500).send({ error: error.message });
   }
 });
 
 // Fetch All Users Endpoint (for Admin Panel)
-app.get('/fetch-all-users', async (req, res) => {
+app.get('/api/fetch-all-users', async (req, res) => {
   try {
     const { email, password } = req.query;
 
@@ -1458,9 +1457,8 @@ app.get('/fetch-all-users', async (req, res) => {
   }
 });
 
-
 // Fetch All Queries Endpoint (for Admin Panel)
-app.get('/fetch-all-queries', async (req, res) => {
+app.get('/api/fetch-all-queries', async (req, res) => {
   try {
     const { email, password } = req.query;
 
@@ -1476,20 +1474,8 @@ app.get('/fetch-all-queries', async (req, res) => {
   }
 });
 
-
-// Define Query Schema and Model
-const querySchema = new mongoose.Schema({
-  name: { type: String, required: true },
-  email: { type: String, required: true },
-  query: { type: String, required: true },
-  submittedAt: { type: Date, default: Date.now },
-});
-
-const Query = mongoose.model('Query', querySchema);
-
-// Submit Query Endpoint
 // Submit Query Endpoint with Email Notification to Admin
-app.post('/submit-query', async (req, res) => {
+app.post('/api/submit-query', async (req, res) => {
   try {
     const { name, email, query } = req.body;
     if (!name || !email || !query) {
@@ -1529,8 +1515,5 @@ app.post('/submit-query', async (req, res) => {
   }
 });
 
-// Start Server
-const PORT = 8000;
-app.listen(PORT, () => {
-  console.log(`Server running on http://127.0.0.1:${PORT}`);
-});
+// Export for Vercel serverless
+module.exports = app;
