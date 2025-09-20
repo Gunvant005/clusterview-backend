@@ -453,7 +453,7 @@ app.post('/login', async (req, res) => {
 });
 
 // Forgot Password Endpoint
-app.post('/forgot-password', async (req, res) => {
+apiRouter.post('/forgot-password', async (req, res) => {
   try {
     const { email, favoriteAnimal } = req.body;
     if (!email || !favoriteAnimal) {
@@ -467,6 +467,7 @@ app.post('/forgot-password', async (req, res) => {
 
     res.status(200).send({ password: user.password });
   } catch (error) {
+    console.error('Forgot Password Error:', error);
     res.status(500).send({ error: error.message });
   }
 });
@@ -1050,7 +1051,7 @@ const ADMIN_EMAIL = 'Admin@gmail.com';
 const ADMIN_PASSWORD = '123';
 
 // Fetch All Rooms Endpoint (for Admin Panel)
-app.get('/fetch-all-rooms', async (req, res) => {
+apiRouter.get('/fetch-all-rooms', async (req, res) => {
   try {
     const { email, password } = req.query;
 
@@ -1495,39 +1496,24 @@ const Query = mongoose.model('Query', querySchema);
 
 // Submit Query Endpoint
 // Submit Query Endpoint with Email Notification to Admin
-app.post('/submit-query', async (req, res) => {
+apiRouter.post('/submit-query', async (req, res) => {
   try {
     const { name, email, query } = req.body;
     if (!name || !email || !query) {
       return res.status(400).send({ error: 'All fields are required' });
     }
 
-    // Save the query to the database
     const newQuery = new Query({ name, email, query });
     await newQuery.save();
 
-    // Send email notification to admin
     const mailOptions = {
       from: process.env.EMAIL_USER,
-      to: 'Admin@gmail.com', // Admin email
+      to: 'Admin@gmail.com',
       subject: 'New User Query Submitted',
       text: `A new query has been submitted:\n\nName: ${name}\nEmail: ${email}\nQuery: ${query}\n\nPlease respond to the user at your earliest convenience.`,
     };
 
-    await transporter.sendMail(mailOptions, (error, info) => {
-      if (error) {
-        console.error('Error sending query notification email to admin:', {
-          error: error.message,
-          code: error.code,
-          response: error.response,
-          responseCode: error.responseCode,
-        });
-        // Don't fail the request if email fails; just log the error
-      } else {
-        console.log('Query notification email sent to admin:', info.response);
-      }
-    });
-
+    await transporter.sendMail(mailOptions);
     res.status(201).send({ message: 'Query submitted successfully' });
   } catch (error) {
     console.error('Error submitting query:', error);
@@ -1536,7 +1522,13 @@ app.post('/submit-query', async (req, res) => {
 });
 
 // Start Server
-const PORT = 8000;
-app.listen(PORT, () => {
-  console.log(`Server running on http://127.0.0.1:${PORT}`);
+const PORT = process.env.PORT || 8000;
+connectDB().then((success) => {
+  if (success) {
+    app.listen(PORT, () => {
+      console.log(`Server running on http://127.0.0.1:${PORT}`);
+    });
+  } else {
+    process.exit(1); // Exit if DB connection fails
+  }
 });
