@@ -83,9 +83,24 @@ const generateOTP = () => {
 };
 
 // Connect to MongoDB
-mongoose.connect(process.env.DATABASE_URL, { useNewUrlParser: true, useUnifiedTopology: true })
-  .then(() => console.log("MongoDB Connected"))
-  .catch((err) => console.error("Connection Error: ", err));
+const connectDB = async (retries = 5) => {
+  for (let i = 0; i < retries; i++) {
+    try {
+      await mongoose.connect(process.env.MONGODB_URI, {
+        serverSelectionTimeoutMS: 30000,
+        socketTimeoutMS: 45000,
+        bufferCommands: false,
+        family: 4,
+      });
+      console.log('MongoDB Connected successfully');
+      return true;
+    } catch (error) {
+      console.error(`Retry ${i + 1}/${retries} failed:`, error.message);
+      if (i === retries - 1) throw error;
+      await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5s before retry
+    }
+  }
+};
 
 // Define OTP Schema and Model
 const otpSchema = new mongoose.Schema({
