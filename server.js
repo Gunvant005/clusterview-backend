@@ -7,9 +7,18 @@ const path = require('path');
 const nodemailer = require('nodemailer');
 const dotenv = require('dotenv');
 const app = express();
+const cloudinary = require('cloudinary').v2;
+const upload = multer({ storage: multer.memoryStorage() }); // In-memory for Cloudinary
 
 // Load environment variables
 dotenv.config();
+
+// Cloudinary configuration
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
 
 // Validate environment variables
 if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
@@ -20,9 +29,9 @@ if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
 // Middleware
 app.use(cors({
   origin: (origin, callback) => {
-    const allowedOrigin = 'https://clusterview-frontend.vercel.app';
-    if (!origin || origin === allowedOrigin || origin === allowedOrigin + '/') {
-      callback(null, allowedOrigin); // Always return without trailing slash
+    const allowedOrigin = ['https://clusterview-frontend.vercel.app', 'http://localhost:3000'];
+    if (!origin || allowedOrigins.includes(origin) || allowedOrigins.includes(origin.replace(/\/$/, ''))) {
+      callback(null, origin);// Always return without trailing slash
     } else {
       callback(new Error('Not allowed by CORS'));
     }
@@ -37,16 +46,16 @@ app.use(bodyParser.json());
 app.use('/uploads', express.static('uploads'));
 
 // Set up multer storage for image uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, 'uploads/');
+const multer = require('multer');
+const upload = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: (req, file, cb) => {
+    if (!file.mimetype.startsWith('image/')) {
+      return cb(new Error('Only images are allowed'));
+    }
+    cb(null, true);
   },
-  filename: (req, file, cb) => {
-    cb(null, Date.now() + path.extname(file.originalname));
-  }
 });
-
-const upload = multer({ storage });
 
 // Nodemailer setup with explicit SMTP configuration
 const transporter = nodemailer.createTransport({
@@ -395,7 +404,7 @@ app.post('/register', async (req, res) => {
         otp: { type: String }, // Add OTP field in personal database
       });
 
-      const UserDetail = userDb.model('user_detail', userDetailSchema);
+      const UserDetail = mongoose.model('UserDetail', userDetailSchema);
       const userDetail = new UserDetail({
         username,
         email,
