@@ -11,6 +11,9 @@ const app = express();
 // Load environment variables
 dotenv.config();
 
+console.log("MONGODB_URI:", process.env.MONGODB_URI ? "Loaded" : "MISSING!!!");
+console.log("EMAIL_USER:", process.env.EMAIL_USER);
+
 // Validate environment variables
 if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
   console.error('Error: EMAIL_USER and EMAIL_PASS must be defined in the .env file.');
@@ -74,9 +77,15 @@ const generateOTP = () => {
 };
 
 // Connect to MongoDB
-mongoose.connect(process.env.DATABASE_URL, { useNewUrlParser: true, useUnifiedTopology: true })
-  .then(() => console.log("MongoDB Connected"))
-  .catch((err) => console.error("Connection Error: ", err));
+mongoose.connect(process.env.MONGODB_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+})
+  .then(() => console.log("MongoDB Connected Successfully"))
+  .catch((err) => {
+    console.error("MongoDB Connection Error:", err);
+    process.exit(1);
+  });
 
 // Define OTP Schema and Model
 const otpSchema = new mongoose.Schema({
