@@ -387,7 +387,7 @@ app.post('/register', async (req, res) => {
     await newUser.save();
 
     const sanitizedUsername = username.replace(/\s+/g, '_');
-    const userDb = mongoose.createConnection(`mongodb://127.0.0.1:27017/${sanitizedUsername}`, {
+    const userDb = mongoose.createConnection(`MONGODB_URI/${sanitizedUsername}`, {
       useNewUrlParser: true,
       useUnifiedTopology: true,
     });
